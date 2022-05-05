@@ -39,5 +39,10 @@ dependencies {
     // Displaying images
     implementation 'com.github.bumptech.glide:glide:3.6.1'
 
+    implementation 'com.google.firebase:firebase-analytics'
+    implementation platform('com.google.firebase:firebase-bom:29.3.1')
+    implementation 'com.google.firebase:firebase-database'
 
 }
+
+apply plugin: 'com.google.gms.google-services'
