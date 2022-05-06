@@ -1,10 +1,12 @@
 package com.learn.friendlychatting;
 
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputFilter;
 import android.text.TextWatcher;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
@@ -23,6 +25,15 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.firebase.ui.auth.AuthUI;
 import com.firebase.ui.auth.FirebaseAuthUIActivityResultContract;
+import com.firebase.ui.auth.IdpResponse;
+import com.firebase.ui.auth.data.model.FirebaseAuthUIAuthenticationResult;
+import com.google.android.gms.auth.api.signin.GoogleSignIn;
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
+import com.google.android.gms.common.api.ApiException;
+import com.google.android.gms.tasks.Continuation;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.database.ChildEventListener;
@@ -30,6 +41,9 @@ import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -41,7 +55,7 @@ public class MainActivity extends AppCompatActivity {
 
     public static final String ANONYMOUS = "anonymous";
     public static final int DEFAULT_MSG_LENGTH_LIMIT = 1000;
-    //  public static final int RC_SIGN_IN = 1;
+    public static int RC_SIGN_IN = 1;
 
     private ListView mMessageListView;
     private MessageAdapter mMessageAdapter;
@@ -57,6 +71,10 @@ public class MainActivity extends AppCompatActivity {
     FirebaseAuth mAuth;
     FirebaseAuth.AuthStateListener mAuthStateListener;
 
+    private static final int RC_PHOTO_PICKER = 2;
+    FirebaseStorage mFirebaseStorage;
+    StorageReference mChatPhotoStorageRef;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -66,6 +84,9 @@ public class MainActivity extends AppCompatActivity {
         mFirebaseDB = FirebaseDatabase.getInstance();
         mMessDBRef = mFirebaseDB.getReference().child("messages");
         mAuth = FirebaseAuth.getInstance();
+        mFirebaseStorage = FirebaseStorage.getInstance();
+
+        mChatPhotoStorageRef = mFirebaseStorage.getReference().child("chat_photos");
 
 
         // Initialize references to views
@@ -130,6 +151,7 @@ public class MainActivity extends AppCompatActivity {
                         .setTheme(R.style.AppTheme)
                         .build();*/
 
+
         Intent signInIntent =
                 AuthUI.getInstance().createSignInIntentBuilder()
                         .setAvailableProviders(Arrays.asList(new AuthUI.IdpConfig.EmailBuilder().build(),
@@ -168,6 +190,17 @@ public class MainActivity extends AppCompatActivity {
             }
         };
 
+        // ImagePickerButton shows an image picker to upload a image for a message
+        mPhotoPickerButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.setType("image/jpeg");
+                intent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+                startActivityForResult(Intent.createChooser(intent, "Complete action using"), RC_PHOTO_PICKER);
+            }
+        });
+
 
     }
 
@@ -195,7 +228,13 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        return super.onOptionsItemSelected(item);
+        switch (item.getItemId()) {
+            case R.id.sign_out_menu:
+                AuthUI.getInstance().signOut(getApplicationContext());
+                return true;
+            default:
+                return super.onOptionsItemSelected(item);
+        }
     }
 
     private ActivityResultLauncher<Intent> signInLauncher = registerForActivityResult(
@@ -203,6 +242,15 @@ public class MainActivity extends AppCompatActivity {
             (result) -> {
                 // Handle the FirebaseAuthUIAuthenticationResult
                 // ...
+                IdpResponse response = result.getIdpResponse();
+
+                if (result.getResultCode() == RESULT_OK) {
+                    // Successfully signed in
+                    // startActivity(SignedInActivity.createIntent(this, response));
+                } else {
+                    // Sign in failed
+                    finish();
+                }
             });
 
 // ...
@@ -263,4 +311,42 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == RC_PHOTO_PICKER && resultCode == RESULT_OK) {
+            Uri selectedImageUri = data.getData();
+
+            // Get a reference to store file at chat_photos/<FILENAME>
+            StorageReference photoRef = mChatPhotoStorageRef.child(selectedImageUri.getLastPathSegment());
+
+            UploadTask uploadTask = photoRef.putFile(selectedImageUri);
+            Task<Uri> urlTask = uploadTask.continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
+                @Override
+                public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> task) throws Exception {
+                    if (!task.isSuccessful()) {
+                        throw task.getException();
+                    }
+
+                    // Continue with the task to get the download URL
+                    return photoRef.getDownloadUrl();
+                }
+            }).addOnCompleteListener(new OnCompleteListener<Uri>() {
+                @Override
+                public void onComplete(@NonNull Task<Uri> task) {
+                    if (task.isSuccessful()) {
+                        Uri downloadUri = task.getResult();
+                        if (downloadUri == null)
+                            return;
+                        else{
+                            FriendlyMessage friendlyMessage = new FriendlyMessage(null, mUsername, downloadUri.toString());
+                            mMessDBRef.push().setValue(friendlyMessage);
+                        }
+
+                    }
+                }
+            });
+        }
+
+    }
 }
